@@ -63,5 +63,8 @@ coverage/
 /blob-report/
 /playwright/.cache/
 
+# Wrangler local state
+.wrangler/
+
 # Optional: Gemini artifacts (if you don't want to commit them)
 # .gemini/

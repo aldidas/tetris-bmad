@@ -1,146 +1,149 @@
-export class AudioController {
-  private audioContext: AudioContext | null = null;
-  muted: boolean = false;
-  private musicInterval: number | null = null;
-  private musicPlaying: boolean = false;
+export type SoundName = 'move' | 'rotate' | 'drop' | 'clear' | 'gameover';
 
-  constructor() {
-    // Initialize AudioContext on first user interaction (browser requirement)
-    if (typeof window !== 'undefined') {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+/** Note format: [frequency in Hz (0 = rest), duration in ms]. */
+type Note = readonly [number, number];
+
+/**
+ * Web Audio sound effects and the Korobeiniki theme.
+ *
+ * Music is driven by an explicit lifecycle — `startMusic` / `pauseMusic` /
+ * `stopMusic` — so it only ever plays while a round is in progress. The theme
+ * position survives a pause instead of restarting from the top.
+ */
+export class AudioController {
+  muted = false;
+
+  private ctx: AudioContext | null = null;
+  private musicTimer: number | null = null;
+  private musicIndex = 0;
+  private wantsMusic = false;
+
+  /** Created lazily so no AudioContext exists before the first user gesture. */
+  private context(): AudioContext | null {
+    if (this.muted) return null;
+
+    if (!this.ctx) {
+      // Safari exposed only the prefixed constructor until v14.1.
+      const Ctor = window.AudioContext ?? (Reflect.get(window, 'webkitAudioContext') as typeof AudioContext | undefined);
+      if (!Ctor) return null;
+      this.ctx = new Ctor();
     }
+
+    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    return this.ctx;
   }
 
-  private playTone(frequency: number, duration: number, type: OscillatorType = 'square', volume: number = 0.3) {
-    if (this.muted || !this.audioContext) return;
+  private playTone(frequency: number, duration: number, type: OscillatorType = 'square', volume = 0.3) {
+    const ctx = this.context();
+    if (!ctx) return;
 
     try {
-      const oscillator = this.audioContext.createOscillator();
-      const gainNode = this.audioContext.createGain();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
 
-      oscillator.connect(gainNode);
-      gainNode.connect(this.audioContext.destination);
-
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
       oscillator.type = type;
       oscillator.frequency.value = frequency;
 
-      // Envelope: quick attack, sustain, quick release
-      const now = this.audioContext.currentTime;
-      gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime(volume, now + 0.01); // Attack
-      gainNode.gain.linearRampToValueAtTime(volume, now + duration - 0.01); // Sustain
-      gainNode.gain.linearRampToValueAtTime(0, now + duration); // Release
+      // Quick attack, sustain, quick release.
+      const now = ctx.currentTime;
+      const attack = Math.min(0.01, duration / 4);
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(volume, now + attack);
+      gain.gain.setValueAtTime(volume, now + duration - attack);
+      gain.gain.linearRampToValueAtTime(0, now + duration);
 
       oscillator.start(now);
       oscillator.stop(now + duration);
-    } catch (e) {
-      console.warn('Audio playback failed:', e);
+    } catch (error) {
+      // Audio must never break the game loop.
+      console.warn('Audio playback failed:', error);
     }
   }
 
-  play(sound: string) {
-    if (this.muted || !this.audioContext) return;
-
-    // Resume audio context on first play (browser autoplay policy)
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
-    }
+  play(sound: SoundName) {
+    if (this.muted) return;
 
     switch (sound) {
       case 'move':
-        // Quick blip
-        this.playTone(800, 0.05, 'square');
+        this.playTone(880, 0.04, 'square', 0.06);
         break;
       case 'rotate':
-        // Double beep
-        this.playTone(600, 0.05, 'square');
-        setTimeout(() => this.playTone(800, 0.05, 'square'), 50);
+        this.playTone(520, 0.05, 'square', 0.12);
         break;
       case 'drop':
-        // Low thud
-        this.playTone(200, 0.1, 'square');
+        this.playTone(180, 0.09, 'triangle', 0.18);
         break;
       case 'clear':
-        // Ascending chime
-        this.playTone(523, 0.1, 'sine'); // C
-        setTimeout(() => this.playTone(659, 0.1, 'sine'), 100); // E
-        setTimeout(() => this.playTone(784, 0.15, 'sine'), 200); // G
+        this.playTone(523, 0.1, 'sine', 0.22);
+        window.setTimeout(() => this.playTone(659, 0.1, 'sine', 0.22), 90);
+        window.setTimeout(() => this.playTone(784, 0.16, 'sine', 0.22), 180);
         break;
       case 'gameover':
-        // Descending sad tone
-        this.playTone(400, 0.2, 'square');
-        setTimeout(() => this.playTone(300, 0.2, 'square'), 200);
-        setTimeout(() => this.playTone(200, 0.3, 'square'), 400);
+        this.playTone(392, 0.18, 'triangle', 0.2);
+        window.setTimeout(() => this.playTone(311, 0.18, 'triangle', 0.2), 180);
+        window.setTimeout(() => this.playTone(233, 0.32, 'triangle', 0.2), 360);
         break;
     }
   }
 
-  // Tetris Theme (Korobeiniki) - Simplified melody
-  private tetrisTheme = [
-    // Note format: [frequency (Hz), duration (ms)]
-    // Main melody
+  private tetrisTheme: readonly Note[] = [
     [659, 400], [494, 200], [523, 200], [587, 400], [523, 200], [494, 200],
     [440, 400], [440, 200], [523, 200], [659, 400], [587, 200], [523, 200],
     [494, 600], [523, 200], [587, 400], [659, 400],
-    [523, 400], [440, 400], [440, 400], [0, 400], // Rest
-    
+    [523, 400], [440, 400], [440, 400], [0, 400],
+
     [587, 400], [698, 200], [880, 400], [784, 200], [698, 200],
     [659, 600], [523, 200], [659, 400], [587, 200], [523, 200],
     [494, 400], [494, 200], [523, 200], [587, 400], [659, 400],
-    [523, 400], [440, 400], [440, 400], [0, 400], // Rest
+    [523, 400], [440, 400], [440, 400], [0, 400],
   ];
 
+  /** Marks the theme as wanted and (re)starts it from the current position. */
   startMusic() {
-    if (this.musicPlaying || !this.audioContext) return;
-    
-    // Resume audio context
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
-    }
-
-    this.musicPlaying = true;
-    this.playMusicLoop();
+    this.wantsMusic = true;
+    if (this.muted || this.musicTimer !== null) return;
+    this.scheduleNote();
   }
 
-  private playMusicLoop() {
-    if (!this.musicPlaying || this.muted) return;
+  private scheduleNote() {
+    const [frequency, duration] = this.tetrisTheme[this.musicIndex];
+    if (frequency > 0) this.playTone(frequency, duration / 1000, 'square', 0.11);
 
-    let index = 0;
-    const playNextNote = () => {
-      if (!this.musicPlaying || this.muted) return;
+    this.musicIndex = (this.musicIndex + 1) % this.tetrisTheme.length;
+    this.musicTimer = window.setTimeout(() => {
+      this.musicTimer = null;
+      if (this.wantsMusic && !this.muted) this.scheduleNote();
+    }, duration);
+  }
 
-      const [frequency, duration] = this.tetrisTheme[index];
-      
-      if (frequency > 0) {
-        this.playTone(frequency, duration / 1000, 'square', 0.15); // Lower volume for bg music
-      }
+  /** Silences the theme but remembers the position and that it is wanted. */
+  pauseMusic() {
+    if (this.musicTimer === null) return;
+    clearTimeout(this.musicTimer);
+    this.musicTimer = null;
+  }
 
-      index++;
-      if (index >= this.tetrisTheme.length) {
-        index = 0; // Loop
-      }
-
-      this.musicInterval = window.setTimeout(playNextNote, duration);
-    };
-
-    playNextNote();
+  resumeMusic() {
+    this.startMusic();
   }
 
   stopMusic() {
-    this.musicPlaying = false;
-    if (this.musicInterval) {
-      clearTimeout(this.musicInterval);
-      this.musicInterval = null;
-    }
+    this.wantsMusic = false;
+    this.musicIndex = 0;
+    this.pauseMusic();
   }
 
-  toggleMute() {
+  toggleMute(): boolean {
     this.muted = !this.muted;
+
     if (this.muted) {
-      this.stopMusic();
-    } else if (!this.musicPlaying) {
+      this.pauseMusic();
+    } else if (this.wantsMusic) {
       this.startMusic();
     }
+
     return this.muted;
   }
 }

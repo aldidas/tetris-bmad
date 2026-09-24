@@ -218,11 +218,8 @@ npx playwright install
 
 ### Issue: Dev server not running
 
-**Solution**: Start the dev server in a separate terminal:
-
-```bash
-npm run dev
-```
+**Solution**: The suite is self-contained — `playwright.config.ts` starts `vite` on port 5173 before the
+first test (`reuseExistingServer` reuses a server you already have running outside CI).
 
 ### Issue: Tests time out
 

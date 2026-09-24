@@ -1,47 +1,105 @@
-# Svelte + TS + Vite
+# Tetris — Svelte 5
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+A complete browser Tetris: a framework-free rules engine in TypeScript, Svelte 5 runes for state, synthesised Web Audio for sound, and Vite as the only build dependency.
 
-## Recommended IDE Setup
+- **Live demo (Cloudflare Pages)**: https://tetris-bmad.pages.dev
+- **Repository**: https://github.com/aldidas/tetris-bmad
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+## Features
 
-## Need an official Svelte framework?
+- All seven tetrominoes with rotation and wall kicks (offsets `0, ±1, ±2`).
+- Gravity that speeds up every 10 lines, plus soft drop and hard drop.
+- Ghost piece showing the landing position, and a next-piece preview.
+- Line clearing, Nintendo-style scoring (40/100/300/1200 × level) and level progression.
+- Game over detection when a piece cannot be spawned.
+- Start, pause and game-over overlays; the game is playable without a keyboard on touch devices.
+- Sound effects and the Korobeiniki theme generated entirely with the Web Audio API — no audio files.
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+## Getting started
 
-## Technical considerations
-
-**Why use this over SvelteKit?**
-
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
-
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
-
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
-
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
-
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
-
-**Why include `.vscode/extensions.json`?**
-
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `allowJs` in the TS template?**
-
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```bash
+npm install
+npm run dev
 ```
+
+| Script            | Purpose                                               |
+| ----------------- | ----------------------------------------------------- |
+| `npm run dev`     | Vite dev server with HMR                              |
+| `npm run build`   | Production build into `dist/`                         |
+| `npm run preview` | Serve the production build locally                    |
+| `npm run check`   | `svelte-check` plus `tsc` for the TypeScript config   |
+| `npm run test:e2e`| Playwright end-to-end suite (starts its own dev server) |
+| `npm run deploy`  | Build and publish `dist/` to Cloudflare Pages         |
+
+## Controls
+
+| Action    | Keyboard       |
+| --------- | -------------- |
+| Move      | `←` `→`        |
+| Rotate    | `↑`            |
+| Soft drop | `↓`            |
+| Hard drop | `Space`        |
+| Pause     | `P`            |
+| Mute      | `M`            |
+| Start     | `Enter`        |
+
+Movement and soft drop repeat while held; rotation, hard drop, pause and mute ignore OS key repeat, so holding a key cannot dump pieces or flicker the pause state. On touch devices (or viewports narrower than 700px) an on-screen control pad appears below the board.
+
+## Architecture
+
+```
+src/
+├── lib/
+│   ├── components/
+│   │   ├── Board.svelte         # Composes stack + ghost + live piece into one grid
+│   │   └── PiecePreview.svelte  # Next-piece preview
+│   ├── game/
+│   │   ├── GameEngine.ts        # Pure rules: collision, rotation, locking, clears
+│   │   ├── Tetrominoes.ts       # Shapes, colours, and the type ↔ grid-value mapping
+│   │   └── AudioController.ts   # Web Audio effects and music lifecycle
+│   └── stores/
+│       └── gameState.svelte.ts  # Runes mirrors of the engine + game loop
+├── App.svelte                   # Showcase shell, game UI, input handling
+└── main.ts
+```
+
+`GameEngine` has no dependency on Svelte, the DOM, timers or audio. `gameState` owns the single `requestAnimationFrame` chain, mirrors the engine into `$state` after every mutation, and applies scoring. The board is rendered by composing the locked stack, the ghost and the live piece into one flat grid, so cell size is purely a CSS concern.
+
+Tetromino type ↔ grid value ↔ colour is defined once in `Tetrominoes.ts` (`typeValue`, `cellColor`, `typeColor`), so the engine and the renderers cannot disagree.
+
+## Testing
+
+```bash
+npx playwright install   # first run only
+npm run test:e2e
+```
+
+The suite covers starting a game, pause/resume, held-key repeat suppression, and hard-drop locking.
+
+```bash
+npx playwright test --project=chromium
+```
+
+## Deployment
+
+The site is a static Vite build published to Cloudflare Pages. `wrangler.jsonc` pins the project name and the build output directory, and `public/_headers` adds security headers plus long-lived caching for fingerprinted assets.
+
+```bash
+npm run deploy
+```
+
+The project (`tetris-bmad`) was created once with `npx wrangler pages project create tetris-bmad --production-branch main --force`; publisher deployments at https://tetris-bmad.pages.dev come from the `main` branch.
+
+## Documentation
+
+- [Product brief](docs/prd.md)
+- [Technical spec](docs/tech-spec.md)
+- [Test design](docs/test-design-epic-1.md)
+- [Epics](docs/epics.md)
+- [Walkthrough](walkthrough.md)
+
+## Known limitations
+
+- No hold piece and no high-score persistence.
+- Wall kicks are the simple bounded offsets above, not the full SRS table.
+- The board grid is decorative for assistive technology; score, level and lines are exposed as text.
