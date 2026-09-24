@@ -1,177 +1,106 @@
 <script lang="ts">
   import { gameState } from '../stores/gameState.svelte';
-  import { TETROMINOES } from '../game/Tetrominoes';
+  import { BOARD_HEIGHT, BOARD_WIDTH, type ActivePiece } from '../game/GameEngine';
+  import { cellColor, typeValue } from '../game/Tetrominoes';
 
-  // Derived grid from state
-  let grid = $derived(gameState.grid);
-  let activePiece = $derived(gameState.activePiece);
+  type CellKind = 'empty' | 'locked' | 'ghost' | 'active';
+  interface Cell {
+    value: number;
+    kind: CellKind;
+  }
 
-  // Calculate Ghost Piece Position
-  let ghostY = $derived.by(() => {
-    if (!activePiece) return null;
-    let y = activePiece.y;
-    // Simulate dropping until collision
-    while (true) {
-      // Check next position (y + 1)
-      let collision = false;
-      for (let row = 0; row < activePiece.shape.length; row++) {
-        for (let col = 0; col < activePiece.shape[row].length; col++) {
-          if (activePiece.shape[row][col] !== 0) {
-            let nextY = y + 1 + row;
-            let nextX = activePiece.x + col;
-            
-            if (nextY >= 20 || (nextY >= 0 && grid[nextY][nextX] !== 0)) {
-              collision = true;
-              break;
-            }
-          }
-        }
-        if (collision) break;
+  /**
+   * The whole board — stack, ghost and live piece — is composed into one flat
+   * grid and rendered once, so cell size stays a pure CSS concern.
+   */
+  function paint(board: Cell[], piece: ActivePiece, x: number, y: number, kind: CellKind) {
+    const value = typeValue(piece.type);
+
+    for (let row = 0; row < piece.shape.length; row++) {
+      for (let col = 0; col < piece.shape[row].length; col++) {
+        if (piece.shape[row][col] === 0) continue;
+
+        const cellX = x + col;
+        const cellY = y + row;
+        if (cellX < 0 || cellX >= BOARD_WIDTH || cellY < 0 || cellY >= BOARD_HEIGHT) continue;
+
+        const index = cellY * BOARD_WIDTH + cellX;
+        // The ghost only marks empty space; it never covers the stack or the piece.
+        if (kind === 'ghost' && board[index].kind !== 'empty') continue;
+        board[index] = { value, kind };
       }
-      
-      if (collision) break;
-      y++;
     }
-    return y;
+  }
+
+  let cells = $derived.by(() => {
+    const board: Cell[] = Array.from({ length: BOARD_WIDTH * BOARD_HEIGHT }, () => ({ value: 0, kind: 'empty' as CellKind }));
+    const { grid, activePiece, ghostY } = gameState;
+
+    for (let y = 0; y < BOARD_HEIGHT; y++) {
+      for (let x = 0; x < BOARD_WIDTH; x++) {
+        const value = grid[y][x];
+        if (value !== 0) board[y * BOARD_WIDTH + x] = { value, kind: 'locked' };
+      }
+    }
+
+    if (activePiece) {
+      if (ghostY !== null) paint(board, activePiece, activePiece.x, ghostY, 'ghost');
+      paint(board, activePiece, activePiece.x, activePiece.y, 'active');
+    }
+
+    return board;
   });
-
-  // Helper to determine cell color
-  function getCellColor(value: number): string {
-    if (value === 0) return 'transparent';
-    // Map numeric value to color (MVP: 1-7 map to specific colors)
-    const colors = Object.values(TETROMINOES).map(t => t.color);
-    return colors[value - 1] || '#fff';
-  }
-
-  function getPieceColor(type: string): string {
-    return TETROMINOES[type as keyof typeof TETROMINOES]?.color || '#fff';
-  }
 </script>
 
-<div class="board">
-  {#each grid as row, y}
-    <div class="row">
-      {#each row as cell, x}
-        <div class="cell" style:background-color={getCellColor(cell)}></div>
-      {/each}
-    </div>
+<div class="board" role="img" aria-label="Tetris board">
+  {#each cells as cell, index (index)}
+    <div class="cell {cell.kind}" style:--c={cellColor(cell.value)}></div>
   {/each}
-
-  <!-- Render Ghost Piece -->
-  {#if activePiece && ghostY !== null}
-    <div 
-      class="active-piece ghost-piece"
-      style:left="{activePiece.x * 31}px"
-      style:top="{ghostY * 31}px"
-    >
-      {#each activePiece.shape as row}
-        <div class="piece-row">
-          {#each row as cell}
-            <div 
-              class="piece-cell" 
-              class:ghost-cell={cell !== 0}
-            ></div>
-          {/each}
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  <!-- Render Active Piece Overlay -->
-  {#if activePiece}
-    <div 
-      class="active-piece"
-      style:left="{activePiece.x * 31}px"
-      style:top="{activePiece.y * 31}px"
-    >
-      {#each activePiece.shape as row, r}
-        <div class="piece-row">
-          {#each row as cell, c}
-            <div 
-              class="piece-cell" 
-              style:background-color={cell ? getPieceColor(activePiece.type) : 'transparent'}
-              class:empty={cell === 0}
-            ></div>
-          {/each}
-        </div>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <style>
   .board {
-    position: relative; /* For absolute positioning of active piece */
+    --cell: 30px;
+    --gap: 2px;
     display: grid;
-    grid-template-rows: repeat(20, 30px); /* Fixed size rows */
-    gap: 1px;
-    background: #0a0a0a; /* Darker background */
-    border: 2px solid #111;
-    width: fit-content; /* Let grid determine width */
-    height: fit-content; /* Let grid determine height */
-  }
-
-  .row {
-    display: grid;
-    grid-template-columns: repeat(10, 30px); /* Fixed size columns */
-    gap: 1px;
+    grid-template-columns: repeat(10, var(--cell));
+    grid-template-rows: repeat(20, var(--cell));
+    gap: var(--gap);
+    padding: 6px;
+    background: #0b0e13;
+    border: 1px solid var(--border);
+    border-radius: 12px;
   }
 
   .cell {
-    /* Remove fixed width/height - let grid handle it */
-    width: 100%;
-    height: 100%;
-    border: 1px solid rgba(0, 255, 65, 0.1); /* Subtle grid lines */
-    box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.5);
-    transition: box-shadow 0.1s;
+    border-radius: 3px;
+    background: #151a22;
+    box-shadow: inset 0 0 0 1px #1f2530;
   }
 
-  /* Add glow to non-empty cells */
-  .cell:not([style*="transparent"]) {
-    box-shadow: 
-      0 0 5px currentColor,
-      inset 0 0 5px rgba(255, 255, 255, 0.2);
+  .cell.locked,
+  .cell.active {
+    background: var(--c);
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 22%),
+      inset 0 -4px 0 rgb(0 0 0 / 16%);
   }
 
-  .active-piece {
-    position: absolute;
-    pointer-events: none;
-    display: flex;
-    flex-direction: column;
+  .cell.active {
+    box-shadow:
+      inset 0 0 0 2px rgb(255 255 255 / 55%),
+      inset 0 -4px 0 rgb(0 0 0 / 16%);
   }
 
-  .piece-row {
-    display: flex;
+  .cell.ghost {
+    background: rgb(255 255 255 / 4%);
+    box-shadow: inset 0 0 0 2px var(--c);
   }
 
-  .piece-cell {
-    width: 30px; /* Match grid cell size */
-    height: 30px; /* Match grid cell size */
-    border: 1px solid rgba(0, 0, 0, 0.3);
-  }
-
-  /* Add glow to piece cells */
-  .piece-cell:not(.empty) {
-    box-shadow: 
-      0 0 8px currentColor,
-      inset 0 0 5px rgba(255, 255, 255, 0.3);
-  }
-  
-  .piece-cell.empty {
-      background: transparent !important;
-  }
-
-  .ghost-piece {
-    opacity: 0.25;
-    z-index: 1;
-  }
-
-  .ghost-cell {
-    border: 2px solid #fff;
-    background: transparent;
-    box-sizing: border-box;
-    width: 30px; /* Match cell size */
-    height: 30px; /* Match cell size */
-    box-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
+  /* Keep the whole board inside narrow viewports. */
+  @media (max-width: 980px) {
+    .board {
+      --cell: min(30px, calc((100vw - 64px) / 10));
+    }
   }
 </style>

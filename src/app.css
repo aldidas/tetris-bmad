@@ -1,18 +1,56 @@
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #161b23;
+  --surface-2: #1f262f;
+  --border: #2b3340;
+
+  /* Text */
+  --text: #e6ebf2;
+  --text-dim: #a3aebd;
+
+  /* Accent */
+  --accent: #4cc9f0;
+  --accent-hover: #74d8f5;
+  --accent-ink: #06202b;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  font-synthesis-weight: none;
+  color: var(--text);
+  background-color: var(--bg);
   color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
   margin: 0;
-  padding: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #1a1a1a;
+  background-color: var(--bg);
 }
 
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

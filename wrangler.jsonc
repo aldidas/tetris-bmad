@@ -1,0 +1,6 @@
+{
+  // Cloudflare Pages project. `wrangler pages deploy` publishes ./dist after `npm run build`.
+  "name": "tetris-bmad",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-24"
+}

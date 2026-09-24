@@ -1,164 +1,220 @@
-import { GameEngine } from '../game/GameEngine';
+import { GameEngine, type ActivePiece, type NextPiece } from '../game/GameEngine';
 import { audio } from '../game/AudioController';
 
+/** Line-clear values, indexed by rows cleared, scaled by the level at the time of the clear. */
+const LINE_SCORES = [0, 40, 100, 300, 1200];
+const LINES_PER_LEVEL = 10;
+const BASE_DROP_INTERVAL = 1000;
+const MIN_DROP_INTERVAL = 100;
+
 export const createGameState = () => {
-  let engine = new GameEngine();
-  
-  // Svelte 5 Runes state
-  let grid = $state(engine.grid);
-  let activePiece = $state(engine.activePiece);
-  let nextPiece = $state(engine.nextPiece);
+  const engine = new GameEngine();
+
+  // Reactive mirrors of the engine. The engine owns the rules; these exist so the
+  // UI can observe them. Every mutation calls a `sync*` helper afterwards.
+  let grid = $state<number[][]>(engine.grid);
+  let activePiece = $state<ActivePiece | null>(engine.activePiece);
+  let nextPiece = $state<NextPiece>(engine.nextPiece);
   let score = $state(0);
   let level = $state(1);
   let lines = $state(0);
   let isGameOver = $state(false);
   let isPaused = $state(false);
+  let isMuted = $state(audio.muted);
 
-  let loopId: number | null = null;
+  let dropInterval = $derived(Math.max(MIN_DROP_INTERVAL, BASE_DROP_INTERVAL - (level - 1) * 100));
+
+  // Depends on both mirrors so it recomputes whenever the piece or board changes.
+  let ghostY = $derived.by(() => {
+    const board = grid;
+    const piece = activePiece;
+    return piece && board ? engine.ghostY() : null;
+  });
+
+  let frameId: number | null = null;
+  let generation = 0;
   let lastTime = 0;
   let dropCounter = 0;
-  let dropInterval = $derived(Math.max(100, 1000 - (level - 1) * 100)); // Simple speed curve
 
-  function loop(time: number = 0) {
-    if (isPaused || isGameOver) return;
+  function syncBoard() {
+    grid = [...engine.grid];
+  }
 
-    const deltaTime = time - lastTime;
+  function syncPiece() {
+    activePiece = engine.activePiece ? { ...engine.activePiece } : null;
+  }
+
+  function syncAll() {
+    syncBoard();
+    syncPiece();
+    nextPiece = engine.nextPiece;
+  }
+
+  /**
+   * Single rAF chain per round. `generation` invalidates any frame still queued
+   * from a previous round, so a stopped loop can never resurrect itself.
+   */
+  function startLoop() {
+    stopLoop();
+    const current = ++generation;
+    lastTime = performance.now();
+    dropCounter = 0;
+
+    const frame = (time: number) => {
+      if (current !== generation) return;
+      tick(time);
+      if (current !== generation) return;
+      frameId = requestAnimationFrame(frame);
+    };
+
+    frameId = requestAnimationFrame(frame);
+  }
+
+  function stopLoop() {
+    generation++;
+    if (frameId !== null) {
+      cancelAnimationFrame(frameId);
+      frameId = null;
+    }
+  }
+
+  function tick(time: number) {
+    dropCounter += time - lastTime;
     lastTime = time;
+    if (dropCounter < dropInterval) return;
 
-    dropCounter += deltaTime;
-    if (dropCounter > dropInterval) {
-      drop();
-      dropCounter = 0; // Reset counter after drop
-    }
-
-    loopId = requestAnimationFrame(loop);
-  }
-
-  function drop() {
+    dropCounter = 0;
     if (!engine.moveDown()) {
-      engine.lockPiece();
-      
-      const cleared = engine.checkLines();
-      if (cleared > 0) {
-        lines += cleared;
-        
-        // Scoring (Standard Nintendo system)
-        // 1 line: 40 * (level + 1)
-        // 2 lines: 100 * (level + 1)
-        // 3 lines: 300 * (level + 1)
-        // 4 lines: 1200 * (level + 1)
-        const points = [0, 40, 100, 300, 1200];
-        score += points[cleared] * level;
-
-        // Level up every 10 lines
-        level = Math.floor(lines / 10) + 1;
-        audio.play('clear');
-      } else {
-        audio.play('drop');
-      }
-
-      grid = [...engine.grid]; // Trigger update
-      spawn();
+      lockAndResolve();
+      return;
     }
-    activePiece = engine.activePiece ? { ...engine.activePiece } : null;
+    syncPiece();
   }
 
+  /** Locks the piece, resolves completed rows, then brings in the next piece. */
+  function lockAndResolve() {
+    engine.lockPiece();
 
-  function spawn() {
-    if (!engine.spawnPiece()) {
-      isGameOver = true;
-      audio.stopMusic(); // Stop background music
-      audio.play('gameover');
-      if (loopId) cancelAnimationFrame(loopId);
+    const cleared = engine.checkLines();
+    if (cleared > 0) {
+      lines += cleared;
+      score += LINE_SCORES[cleared] * level;
+      level = Math.floor(lines / LINES_PER_LEVEL) + 1;
+      audio.play('clear');
+    } else {
+      audio.play('drop');
     }
-    activePiece = engine.activePiece ? { ...engine.activePiece } : null;
-    nextPiece = { ...engine.nextPiece };
+
+    dropCounter = 0;
+    syncBoard();
+
+    if (!engine.spawnPiece()) {
+      endGame();
+      return;
+    }
+
+    syncAll();
+  }
+
+  function endGame() {
+    stopLoop();
+    isGameOver = true;
+    // The piece that could not be placed is not part of the board.
+    activePiece = null;
+    audio.stopMusic();
+    audio.play('gameover');
+  }
+
+  function setPaused(paused: boolean) {
+    if (paused === isPaused) return;
+
+    isPaused = paused;
+    if (paused) {
+      stopLoop();
+      audio.pauseMusic();
+    } else {
+      startLoop();
+      audio.resumeMusic();
+    }
   }
 
   return {
     get grid() { return grid },
     get activePiece() { return activePiece },
     get nextPiece() { return nextPiece },
+    get ghostY() { return ghostY },
     get score() { return score },
     get level() { return level },
     get lines() { return lines },
     get isGameOver() { return isGameOver },
     get isPaused() { return isPaused },
-    
-    // Actions
+    get isMuted() { return isMuted },
+
     startGame() {
-      engine = new GameEngine();
-      grid = engine.grid;
+      stopLoop();
+      engine.reset();
       score = 0;
       level = 1;
       lines = 0;
       isGameOver = false;
       isPaused = false;
-      
-      spawn();
-      lastTime = 0;
-      dropCounter = 0;
-      loop();
-      audio.startMusic(); // Start background music
+      // An empty board always accepts the first piece.
+      engine.spawnPiece();
+      syncAll();
+      startLoop();
+      audio.startMusic();
     },
 
-    moveLeft() { 
+    moveLeft() {
       if (isPaused || isGameOver) return;
-      engine.moveLeft(); 
-      activePiece = { ...engine.activePiece! }; 
+      if (!engine.moveLeft()) return;
+      syncPiece();
       audio.play('move');
     },
-    moveRight() { 
+
+    moveRight() {
       if (isPaused || isGameOver) return;
-      engine.moveRight(); 
-      activePiece = { ...engine.activePiece! }; 
+      if (!engine.moveRight()) return;
+      syncPiece();
       audio.play('move');
     },
-    rotate() { 
+
+    rotate() {
       if (isPaused || isGameOver) return;
-      engine.rotate(); 
-      activePiece = { ...engine.activePiece! }; 
+      if (!engine.rotate()) return;
+      syncPiece();
       audio.play('rotate');
     },
-    softDrop() { 
-      if (isPaused || isGameOver) return;
-      drop(); 
-      // No sound for soft drop usually, or very quiet
-    },
-    hardDrop() {
-        if (isPaused || isGameOver) return;
-        while(engine.moveDown()) {} // Drop until hit
-        engine.lockPiece();
-        
-        // Check lines immediately for hard drop
-        const cleared = engine.checkLines();
-        if (cleared > 0) {
-            lines += cleared;
-            const points = [0, 40, 100, 300, 1200];
-            score += points[cleared] * level;
-            level = Math.floor(lines / 10) + 1;
-            audio.play('clear');
-        } else {
-            audio.play('drop');
-        }
 
-        grid = [...engine.grid];
-        spawn();
+    /** One row down on demand, resetting the gravity timer. */
+    softDrop() {
+      if (isPaused || isGameOver) return;
+      dropCounter = 0;
+      if (!engine.moveDown()) {
+        lockAndResolve();
+        return;
+      }
+      syncPiece();
     },
+
+    hardDrop() {
+      if (isPaused || isGameOver) return;
+      dropCounter = 0;
+      while (engine.moveDown()) {
+        // Fall to the landing position.
+      }
+      lockAndResolve();
+    },
+
     togglePause() {
-        isPaused = !isPaused;
-        if (!isPaused) {
-            lastTime = performance.now();
-            loop(lastTime);
-        } else if (loopId) {
-            cancelAnimationFrame(loopId);
-        }
+      if (isGameOver) return;
+      setPaused(!isPaused);
     },
+
     toggleMute() {
-        return audio.toggleMute();
-    }
+      isMuted = audio.toggleMute();
+    },
   };
 };
 
-// Singleton instance
 export const gameState = createGameState();

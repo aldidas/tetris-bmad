@@ -21,6 +21,14 @@ export default defineConfig({
     navigationTimeout: 30 * 1000, // Navigation timeout: 30s
   },
 
+  // The suite boots its own dev server unless one is already listening.
+  webServer: {
+    command: 'npm run dev -- --port 5173 --strictPort',
+    url: 'http://127.0.0.1:5173',
+    reuseExistingServer: !process.env.CI,
+    timeout: 60 * 1000,
+  },
+
   reporter: [['html', { outputFolder: 'test-results/html' }], ['junit', { outputFile: 'test-results/junit.xml' }], ['list']],
 
   projects: [
